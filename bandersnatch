@@ -461,35 +461,17 @@ sub receiveCB
   }
 
 ############# End Mask depending on privacy level ########################
-
-  # Quote-ify all the variables we're going to be sticking into the database
-  $message{'to'} = $dbh->quote($message{'to'});
-  $message{'from'} = $dbh->quote($message{'from'});
-  $message{'id'} = $dbh->quote($message{'id'});
-  $message{'type'} = $dbh->quote($message{'type'});
-  $message{'body'} = $dbh->quote($message{'body'});
-  $message{'subject'} = $dbh->quote($message{'subject'});
-  $message{'thread'} = $dbh->quote($message{'thread'});
-  $message{'error'} = $dbh->quote($message{'error'});
-  $message{'errorcode'}	= $dbh->quote($message{'errorcode'});		
-
+	
+  # Prepare SQL insert into message table
   $sqlquery = "INSERT INTO message (message_to,message_from,message_id,";
   $sqlquery .= "message_type,message_body,message_subject,message_thread,";
-  $sqlquery .= "message_error,message_errorcode) VALUES (";
-  $sqlquery .= $message{'to'}. ",";
-  $sqlquery .= $message{'from'}. ",";
-  $sqlquery .= $message{'id'}. ",";
-  $sqlquery .= $message{'type'}. ",";
-  $sqlquery .= $message{'body'}. ",";
-  $sqlquery .= $message{'subject'}. ",";
-  $sqlquery .= $message{'thread'}. ",";
-  $sqlquery .= $message{'error'}. ",";
-  $sqlquery .= $message{'errorcode'}. ")";
+  $sqlquery .= "message_error,message_errorcode) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)" ;
 
+  # Log SQL Query (TODO: Correct this so it expands the query
   $debug->Log2("receiveCB: query($sqlquery)");
 
   my $sth = $dbh->prepare($sqlquery);
-  $sth->execute;
+  $sth->execute($message{'to'}, $message{'from'}, $message{'id'}, $message{'type'}, $message{'body'}, $message{'subject'}, $message{'thread'}, $message{'error'}, $message{'errorcode'} );
 
   # Update the activity on the users table, if it's SENT by a user on the local SERVER
   my $fromjid;
@@ -497,8 +479,8 @@ sub receiveCB
   if ($message{'from'} =~ /([a-z.]+\@$config{site}->{local_server})\//i )
   {
     $fromjid = $1;
-    $sth = $dbh->prepare("SELECT user_status, user_subscribed FROM user WHERE (user_jid = '$fromjid')");
-    $sth->execute;
+    $sth = $dbh->prepare("SELECT user_status, user_subscribed FROM user WHERE (user_jid = ?)");
+    $sth->execute($fromjid);
     my ($user_status,$subscribed) = $sth->fetchrow_array();
 
     if (($user_status) && ($user_status eq "offline"))
@@ -684,14 +666,9 @@ sub presenceCB
 
   # Log this occurance into the database
   $sqlquery = "INSERT INTO presence (presence_from,presence_type, presence_priority,";
-  $sqlquery .= "presence_status,presence_show) VALUES (";
-  $sqlquery .= $dbh->quote($from). ",";
-  $sqlquery .= $dbh->quote($type). ",";
-  $sqlquery .= $dbh->quote($priority). ",";
-  $sqlquery .= $dbh->quote($status). ",";
-  $sqlquery .= $dbh->quote($show). ")";
+  $sqlquery .= "presence_status,presence_show) VALUES (?, ?, ?, ?, ?)";
   my $sth = $dbh->prepare($sqlquery);
-  $sth->execute;
+  $sth->execute($from, $type, $priority, $status, $show);
 
 # +------------------------------------------------------------------------+
 # | User unsubscribes us from their presence                               |
@@ -758,8 +735,8 @@ sub presenceCB
       $custom_status = $show;
     }
 		
-    my $sth = $dbh->prepare("SELECT count(*) FROM user WHERE (user_jid = '$fromjid')");
-    $sth->execute;
+    my $sth = $dbh->prepare("SELECT count(*) FROM user WHERE (user_jid = ?)");
+    $sth->execute($fromjid);
     my ($jid_exists) = $sth->fetchrow_array();
 
     if ($jid_exists > 1)
@@ -907,9 +884,9 @@ sub generate_presence_history
   ######## Presence History ###########
   # Work out last status of yesterday
   my $date_condition = "(TO_DAYS(NOW()) - TO_DAYS(presence_timestamp) > 0)";
-  my $sqlquery = "SELECT presence_type, presence_status, presence_show FROM presence WHERE presence_from LIKE '%$from%' AND presence_type NOT LIKE 'probe' AND presence_type NOT LIKE '%subscribe' AND $date_condition ORDER BY presence_timestamp DESC LIMIT 0,1";
+  my $sqlquery = "SELECT presence_type, presence_status, presence_show FROM presence WHERE presence_from LIKE ? AND presence_type NOT LIKE 'probe' AND presence_type NOT LIKE ? AND ? ORDER BY presence_timestamp DESC LIMIT 0,1";
   my $sth = $dbh->prepare($sqlquery);	 	
-  $sth->execute;
+  $sth->execute('%'.$from.'%', %subscribe, $date_condition);
 
   #------- First, work out the most recent presence that's NOT today
   my $yesterday_presence;
@@ -931,9 +908,9 @@ sub generate_presence_history
 
   # ------- Get today's presences
   $date_condition = "DATE_FORMAT( presence_timestamp, '%Y%m%d' ) = DATE_FORMAT( now( ) , '%Y%m%d' ) ";
-  $sqlquery = "SELECT presence_type, presence_status, presence_show, DATE_FORMAT(presence_timestamp, '%Hh%i') as presence_timestamp_formatted FROM presence WHERE presence_from LIKE '%$from%' AND $date_condition ORDER BY presence_timestamp";
+  $sqlquery = "SELECT presence_type, presence_status, presence_show, DATE_FORMAT(presence_timestamp, '%Hh%i') as presence_timestamp_formatted FROM presence WHERE presence_from LIKE ? AND ? ORDER BY presence_timestamp";
   $sth = $dbh->prepare($sqlquery);
-  $sth->execute;
+  $sth->execute('%'.$from.'%', $date_condition);
 
   while (my @data = $sth->fetchrow_array())
   {
@@ -1033,14 +1010,14 @@ sub generate_message_summary
   my $local_domain_condition = "";
  
   foreach my $local_domain (@{$config{site}{local_domains}})
-  {
+  { # TODO: Check if the manual escapes are escaped, which possibly breaks SQL query.
     $local_domain_condition .= " message_to LIKE '%\@$local_domain%' OR";
   }
 
   $local_domain_condition = substr($local_domain_condition,0,-3);
-  $sqlquery = "SELECT count( * ) FROM message WHERE message_from LIKE '$jid%' AND ($local_domain_condition) AND $date_condition";
+  $sqlquery = "SELECT count( * ) FROM message WHERE message_from LIKE ? AND (?) AND ?";
   my $sth = $dbh->prepare($sqlquery);
-  $sth->execute;
+  $sth->execute($jid.'%', $local_domain_condition, $date_condition);
   my $sent_local = $sth->fetchrow_array();
 
   ############# Finished sent_local ############
@@ -1049,14 +1026,15 @@ sub generate_message_summary
   $local_domain_condition = "";
 
   foreach my $local_domain (@{$config{site}{local_domains}})
-  {
+  { # TODO: Check if the manual escapes are escaped, which possibly breaks SQL query.
     $local_domain_condition .= " message_from LIKE '%\@$local_domain%' OR";
   }
 
   $local_domain_condition = substr($local_domain_condition,0,-3);
-  $sqlquery = "SELECT count( * ) FROM message WHERE message_to LIKE '$jid%' AND ($local_domain_condition) AND $date_condition";
+
+  $sqlquery = "SELECT count( * ) FROM message WHERE message_to LIKE ? AND (?) AND ?";
   $sth = $dbh->prepare($sqlquery);
-  $sth->execute;
+  $sth->execute($jid.'%', $local_domain_condition, $date_condition);
   my ($received_local) = $sth->fetchrow_array();
 
   ############ Finished received_local #############
@@ -1066,16 +1044,16 @@ sub generate_message_summary
   my $local_domain_condition_from;
 
   foreach my $local_domain (@{$config{site}{local_domains}})
-  {
+  { # TODO: Check if the manual escapes are escaped, which possibly breaks SQL query.
     $local_domain_condition_to   .= " message_to LIKE '%\@$local_domain%' OR";
     $local_domain_condition_from .= " message_from LIKE '%\@$local_domain%' OR";
   }
 
   $local_domain_condition_to   = substr($local_domain_condition_to,0,-3);
   $local_domain_condition_from = substr($local_domain_condition_from,0,-3);
-  $sqlquery = "SELECT count( * ) FROM message WHERE (($local_domain_condition_to) AND ($local_domain_condition_from)) AND $date_condition ";
+  $sqlquery = "SELECT count( * ) FROM message WHERE ((?) AND (?)) AND ? ";
   $sth = $dbh->prepare($sqlquery);
-  $sth->execute;
+  $sth->execute($local_domain_condition_to, $local_domain_condition_from, $date_condition);
   my ($total_local) = $sth->fetchrow_array();
 
   ############ Finished total_local ################
@@ -1090,13 +1068,13 @@ sub generate_message_summary
   $local_domain_condition = "";
 
   foreach my $local_domain (@{$config{site}{local_domains}})
-  {
+  { # TODO: Check if the manual escapes are escaped, which possibly breaks SQL query.
     $local_domain_condition .= " AND message_to NOT LIKE '%\@$local_domain%'";
   }
 
-  $sqlquery = "SELECT count( * ) FROM message WHERE message_from LIKE '$jid%' $local_domain_condition AND $date_condition";
+  $sqlquery = "SELECT count( * ) FROM message WHERE message_from LIKE ? ? AND ?";
   $sth = $dbh->prepare($sqlquery);
-  $sth->execute;
+  $sth->execute($jid.'%', $local_domain_condition, $date_condition);
   my ($sent_remote) = $sth->fetchrow_array();
 
   ############ Finished sent_local ################
@@ -1105,13 +1083,13 @@ sub generate_message_summary
   $local_domain_condition = "";
 
   foreach my $local_domain (@{$config{site}{local_domains}})
-  {
+  { # TODO: Check if the manual escapes are escaped, which possibly breaks SQL query.
     $local_domain_condition .= " AND message_from NOT LIKE '%\@$local_domain%'";
   }
 
-  $sqlquery = "SELECT count( * ) FROM message WHERE message_to LIKE '$jid%' $local_domain_condition AND $date_condition";
+  $sqlquery = "SELECT count( * ) FROM message WHERE message_to LIKE ? ? AND ?";
   $sth = $dbh->prepare($sqlquery);
-  $sth->execute;
+  $sth->execute($jid.'%', $local_domain_condition, $date_condition);
   my ($received_remote) = $sth->fetchrow_array();
 
   ############ Finish received_remote ################
@@ -1122,16 +1100,16 @@ sub generate_message_summary
   $local_domain_condition_from ="";
 
   foreach my $local_domain (@{$config{site}{local_domains}})
-  {
+  { # TODO: Check if the manual escapes are escaped, which possibly breaks SQL query.
     $local_domain_condition_to .= " message_to NOT LIKE '%\@$local_domain%' AND";
     $local_domain_condition_from .= " message_from NOT LIKE '%\@$local_domain%' AND";
   }
 
   $local_domain_condition_to = substr($local_domain_condition_to,0,-4); # trim final AND
   $local_domain_condition_from = substr($local_domain_condition_from,0,-4);
-  $sqlquery = "SELECT count( * ) FROM message WHERE (($local_domain_condition_to) OR ($local_domain_condition_from)) AND $date_condition ";
+  $sqlquery = "SELECT count( * ) FROM message WHERE ((?) OR (?)) AND ? ";
   $sth = $dbh->prepare($sqlquery);
-  $sth->execute;
+  $sth->execute($local_domain_condition_to, $local_domain_condition_from, $date_condition);
   my ($total_remote) = $sth->fetchrow_array();
 
   ############ Finish total_remote ################
@@ -1209,14 +1187,14 @@ sub generate_top_list
   my $local_domain_condition;
 
   foreach my $local_domain (@{$config{site}{local_domains}}) 
-  {
+  { # TODO: Check if the manual escapes are escaped, which possibly breaks SQL query.
     $local_domain_condition .= " message_to LIKE '%\@$local_domain%' OR";
   }
 
   $local_domain_condition = substr($local_domain_condition,0,-3);
-  $sqlquery = "SELECT count(*) as count, message_to FROM message WHERE message_from LIKE '$jid%' AND ($local_domain_condition) AND $date_condition GROUP BY message_to ORDER BY count DESC LIMIT 0,$amount";
+  $sqlquery = "SELECT count(*) as count, message_to FROM message WHERE message_from LIKE ? AND (?) AND ? GROUP BY message_to ORDER BY count DESC LIMIT 0,?";
   my $sth = $dbh->prepare($sqlquery);
-  $sth->execute;
+  $sth->execute($jid.'%', $local_domain_condition, $date_condition, $amount);
 	
   while (my @data = $sth->fetchrow_array())
   {
@@ -1244,13 +1222,13 @@ sub generate_top_list
   $local_domain_condition = "";
 
   foreach my $local_domain (@{$config{site}{local_domains}})
-  {
+  { # TODO: Check if the manual escapes are escaped, which possibly breaks SQL query.
     $local_domain_condition .= " AND message_to NOT LIKE '%\@$local_domain%'";
   }
 
-  $sqlquery = "SELECT count(*) as count, message_to FROM message WHERE message_from LIKE '$jid%' $local_domain_condition AND $date_condition GROUP BY message_to ORDER BY count DESC LIMIT 0,$amount";
+  $sqlquery = "SELECT count(*) as count, message_to FROM message WHERE message_from LIKE ? ? AND ? GROUP BY message_to ORDER BY count DESC LIMIT 0,?";
   $sth = $dbh->prepare($sqlquery);
-  $sth->execute;
+  $sth->execute($jid.'%', $local_domain_condition, $date_condition, $amount);
 	
   while (my @data = $sth->fetchrow_array())
   {
