@@ -41,7 +41,7 @@ $tpl = new HTML_Template_IT("../templates");
 $tpl->loadTemplatefile($config['template'], true, true);
 
 // Load PEAR DB Libraries
-require_once( 'DB.php' );
+require_once( 'MDB2.php' );
 require_once( '../includes/functions.inc.php' );
 $db = DB::connect($dsn);
 if (DB::isError($db)) { generate_error('Database connection error - '. $dsn); }
@@ -70,12 +70,12 @@ foreach ($messagetypes as $type)
 
 // Define global variables that the functions will use
 $func = $HTTP_GET_VARS['func'];
-$jid = $HTTP_GET_VARS['jid'];
+$jid = $db->qoute($HTTP_GET_VARS['jid'], 'text'); # Passed in SQL Statement
 $page = $HTTP_GET_VARS['page'];
 $limit = $HTTP_GET_VARS['limit'];
 $orderby = $HTTP_GET_VARS['orderby'];
 $oldfunc = $HTTP_GET_VARS['oldfunc'];
-$date = $HTTP_GET_VARS['date'];
+$date = $db->qoute($HTTP_GET_VARS['date']); # Passed in SQL Statement
 $search = $HTTP_GET_VARS['search'];
 
 
